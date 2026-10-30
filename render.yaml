@@ -37,3 +37,4 @@ databases:
     user: dart_user
     plan: free
     region: frankfurt
+

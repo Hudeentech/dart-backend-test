@@ -27,7 +27,7 @@ async function bootstrap() {
 
   // Global Route Prefix
   const apiPrefix = process.env.API_PREFIX || 'api/v1';
-  app.setGlobalPrefix(apiPrefix);
+  app.setGlobalPrefix(apiPrefix, { exclude: ['/', ''] });
 
   // Strict Data Validation Pipe
   app.useGlobalPipes(
