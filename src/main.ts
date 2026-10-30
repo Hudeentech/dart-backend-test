@@ -20,7 +20,7 @@ async function bootstrap() {
 
   // Cross-Origin Resource Sharing
   app.enableCors({
-    origin: '*', // Customize for production domains
+    origin: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
@@ -66,7 +66,7 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 
   logger.log(`🚀 DART.ng Backend API is running on: http://localhost:${port}/${apiPrefix}`);
   logger.log(`📚 Swagger Documentation is available at: http://localhost:${port}/api/docs`);

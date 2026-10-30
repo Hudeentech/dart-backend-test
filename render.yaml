@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: dart-backend
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npx prisma db push && npm run start:prod
+    healthCheckPath: /api/v1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PREFIX
+        value: api/v1
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dart-postgres
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_EXPIRATION
+        value: 15m
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_EXPIRATION
+        value: 7d
+      - key: PAYMENT_PROVIDER
+        value: mock
+      - key: NOTIFICATION_PROVIDER
+        value: mock
+      - key: STORAGE_PROVIDER
+        value: local
+
+databases:
+  - name: dart-postgres
+    databaseName: dart_db
+    user: dart_user
+    plan: free
+    region: frankfurt
