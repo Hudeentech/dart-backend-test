@@ -33,13 +33,22 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    const hasRole = requiredRoles.includes(user.role);
-    if (!hasRole) {
-      throw new ForbiddenException(
-        `Access denied: required role in [${requiredRoles.join(', ')}]`,
-      );
+    // Direct role match
+    if (requiredRoles.includes(user.role)) {
+      return true;
     }
 
-    return true;
+    // Unified account cross-role access:
+    // A DART user can use any account type (Customer & Rider).
+    // If an endpoint allows CUSTOMER or RIDER, and the user is either CUSTOMER or RIDER, allow access.
+    const isEndUserRole = (r: UserRole) => r === UserRole.CUSTOMER || r === UserRole.RIDER;
+    const allowsEndUser = requiredRoles.some(isEndUserRole);
+    if (isEndUserRole(user.role) && allowsEndUser) {
+      return true;
+    }
+
+    throw new ForbiddenException(
+      `Access denied: required role in [${requiredRoles.join(', ')}]`,
+    );
   }
 }

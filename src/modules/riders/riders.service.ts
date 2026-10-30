@@ -21,7 +21,7 @@ export class RidersService {
   ) {}
 
   async getProfile(userId: string) {
-    const profile = await this.prisma.riderProfile.findUnique({
+    let profile = await this.prisma.riderProfile.findUnique({
       where: { userId },
       include: {
         user: {
@@ -39,38 +39,122 @@ export class RidersService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Rider profile not found');
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { identityProfile: true },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Check if user has verified KYC on personal account
+      const isVerified = user.identityProfile?.kycStatus === 'VERIFIED';
+      profile = await this.prisma.riderProfile.create({
+        data: {
+          userId,
+          isVerified,
+          availability: {
+            create: {
+              status: 'OFFLINE',
+            },
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              phoneNumber: true,
+              email: true,
+              profileImageUrl: true,
+            },
+          },
+          availability: true,
+        },
+      });
     }
 
     return profile;
   }
 
   async updateProfile(userId: string, dto: UpdateRiderProfileDto) {
-    const profile = await this.prisma.riderProfile.findUnique({
-      where: { userId },
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { identityProfile: true },
     });
 
-    if (!profile) {
-      throw new NotFoundException('Rider profile not found');
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
 
-    return this.prisma.riderProfile.update({
+    const isVerified = user.identityProfile?.kycStatus === 'VERIFIED';
+
+    const profile = await this.prisma.riderProfile.upsert({
       where: { userId },
-      data: {
+      create: {
+        userId,
+        vehicleType: dto.vehicleType || 'MOTORCYCLE',
+        plateNumber: dto.plateNumber,
+        licenseNumber: dto.licenseNumber,
+        isVerified,
+        availability: {
+          create: {
+            status: 'ONLINE',
+          },
+        },
+      },
+      update: {
         vehicleType: dto.vehicleType,
         plateNumber: dto.plateNumber,
         licenseNumber: dto.licenseNumber,
+        ...(isVerified ? { isVerified: true } : {}),
       },
     });
+
+    // If the rider has verified rider profile, sync KYC status on identityProfile as well
+    if (profile.isVerified && user.identityProfile?.kycStatus !== 'VERIFIED') {
+      await this.prisma.identityProfile.upsert({
+        where: { userId },
+        create: {
+          userId,
+          kycStatus: 'VERIFIED',
+          idType: 'DRIVERS_LICENSE',
+          verifiedAt: new Date(),
+        },
+        update: {
+          kycStatus: 'VERIFIED',
+          verifiedAt: new Date(),
+        },
+      }).catch(() => {});
+
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { isProfileComplete: true },
+      }).catch(() => {});
+    }
+
+    return profile;
   }
 
   async updateAvailability(userId: string, dto: UpdateRiderAvailabilityDto) {
-    const profile = await this.prisma.riderProfile.findUnique({
+    let profile = await this.prisma.riderProfile.findUnique({
       where: { userId },
     });
 
     if (!profile) {
-      throw new NotFoundException('Rider profile not found');
+      profile = await this.prisma.riderProfile.create({
+        data: {
+          userId,
+          availability: {
+            create: {
+              status: dto.status,
+            },
+          },
+        },
+      });
+      return profile;
     }
 
     return this.prisma.riderAvailability.upsert({

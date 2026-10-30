@@ -46,7 +46,8 @@ export class UsersService {
         if (user) {
           const isVerified = Boolean(
             user.isProfileComplete ||
-            user.identityProfile?.kycStatus === 'VERIFIED',
+            user.identityProfile?.kycStatus === 'VERIFIED' ||
+            user.riderProfile?.isVerified,
           );
           if (isVerified && !user.isProfileComplete) {
             this.prisma.user.update({
@@ -363,6 +364,7 @@ export class UsersService {
           where: { id: userId },
           include: {
             identityProfile: true,
+            riderProfile: true,
             savedAddresses: true,
           },
         });
@@ -379,7 +381,7 @@ export class UsersService {
     const isPhoneVerified = Boolean(user?.isPhoneVerified);
     const isProfileComplete = Boolean(user?.isProfileComplete);
     const identityProfile = user?.identityProfile;
-    const isNinVerified = identityProfile?.kycStatus === 'VERIFIED';
+    const isNinVerified = identityProfile?.kycStatus === 'VERIFIED' || Boolean(user?.riderProfile?.isVerified);
     const hasAddress = Boolean(user?.savedAddresses && user.savedAddresses.length > 0);
 
     // Calculate progress: 60% base if email, phone, and profile complete, +20% for NIN, +20% for address
