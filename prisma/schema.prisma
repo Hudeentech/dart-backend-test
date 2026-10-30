@@ -1,0 +1,735 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --------------------------------------------------------
+// ENUMS
+// --------------------------------------------------------
+
+enum UserRole {
+  CUSTOMER
+  RIDER
+  BUSINESS
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum VerificationType {
+  PHONE_OTP
+  EMAIL_OTP
+  PASSWORD_RESET
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum RiderStatus {
+  OFFLINE
+  ONLINE
+  BUSY
+  ON_DELIVERY
+}
+
+enum VehicleType {
+  MOTORCYCLE
+  BICYCLE
+  CAR
+  VAN
+}
+
+enum PackageCategory {
+  DOCUMENT
+  PARCEL
+  FOOD
+  ELECTRONICS
+  CLOTHING
+  FRAGILE_ITEM
+  OTHER
+}
+
+enum OrderStatus {
+  DRAFT
+  RIDER_REQUESTED
+  RIDER_SELECTED
+  PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  RIDER_ASSIGNED
+  RIDER_ACCEPTED
+  PICKUP_PENDING
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CUSTOMER_CONFIRMED
+  SETTLED
+  CANCELLED
+  EXPIRED
+  FAILED
+  DISPUTED
+}
+
+enum PaymentMethod {
+  WALLET
+  CARD
+  BANK_TRANSFER
+  CASH_ON_DELIVERY
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  SUCCESSFUL
+  FAILED
+  REFUNDED
+}
+
+enum LedgerTransactionType {
+  DEPOSIT
+  ORDER_PAYMENT
+  ORDER_ESCROW_HOLD
+  ORDER_ESCROW_RELEASE
+  RIDER_SETTLEMENT
+  PLATFORM_FEE
+  WITHDRAWAL
+  REFUND
+  ADJUSTMENT
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+enum HoldStatus {
+  ACTIVE
+  RELEASED
+  CAPTURED
+  CANCELLED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  CANCELLED
+}
+
+// --------------------------------------------------------
+// USERS & IDENTITY
+// --------------------------------------------------------
+
+model User {
+  id                String        @id @default(uuid())
+  email             String?       @unique
+  phoneNumber       String?       @unique
+  googleId          String?       @unique
+  passwordHash      String?
+  firstName         String?
+  lastName          String?
+  role              UserRole      @default(CUSTOMER)
+  status            AccountStatus @default(ACTIVE)
+  isPhoneVerified   Boolean       @default(false)
+  isEmailVerified   Boolean       @default(false)
+  isProfileComplete Boolean       @default(false)
+  profileImageUrl   String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relationships
+  sessions         UserSession[]
+  verifications    VerificationToken[]
+  identityProfile  IdentityProfile?
+  riderProfile     RiderProfile?
+  savedAddresses   Address[]
+  packagesCreated  Package[]           @relation("CustomerPackages")
+  packageDrafts    PackageDraft[]
+  customerOrders   Order[]             @relation("CustomerOrders")
+  riderOrders      Order[]             @relation("RiderOrders")
+  walletAccount    WalletAccount?
+  ratingsGiven     Rating[]            @relation("RatingsGiven")
+  ratingsReceived  Rating[]            @relation("RatingsReceived")
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+  supportTickets   SupportTicket[]
+  savedCards       SavedCard[]
+  inboundPackages  InboundPackage[]
+  sentChatMessages ChatMessage[]
+
+  @@index([email])
+  @@index([phoneNumber])
+  @@index([role, status])
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  isRevoked    Boolean  @default(false)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([refreshToken])
+}
+
+model VerificationToken {
+  id         String           @id @default(uuid())
+  userId     String?
+  user       User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identifier String // phone or email
+  token      String // hashed or 6-digit OTP
+  type       VerificationType
+  isUsed     Boolean          @default(false)
+  attempts   Int              @default(0)
+  expiresAt  DateTime
+  createdAt  DateTime         @default(now())
+
+  @@index([identifier, type, isUsed])
+}
+
+model IdentityProfile {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycProvider     String? // e.g. "Doppler", "Prembly", "QoreID"
+  kycStatus       KycStatus @default(NOT_SUBMITTED)
+  ninMasked       String? // e.g. "******1234" - minimal retention
+  idType          String? // "NIN", "VOTERS_CARD", "DRIVERS_LICENSE"
+  verifiedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// --------------------------------------------------------
+// RIDERS
+// --------------------------------------------------------
+
+model RiderProfile {
+  id              String             @id @default(uuid())
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType     VehicleType        @default(MOTORCYCLE)
+  plateNumber     String?
+  licenseNumber   String?
+  isVerified      Boolean            @default(false)
+  averageRating   Float              @default(5.0)
+  totalDeliveries Int                @default(0)
+  currentLat      Float?
+  currentLng      Float?
+  lastLocationAt  DateTime?
+  availability    RiderAvailability?
+  assignments     RiderAssignment[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([isVerified])
+}
+
+model RiderAvailability {
+  id             String       @id @default(uuid())
+  riderProfileId String       @unique
+  riderProfile   RiderProfile @relation(fields: [riderProfileId], references: [id], onDelete: Cascade)
+  status         RiderStatus  @default(OFFLINE)
+  updatedAt      DateTime     @updatedAt
+
+  @@index([status])
+}
+
+// --------------------------------------------------------
+// ADDRESSES & PACKAGES
+// --------------------------------------------------------
+
+model Address {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String? // e.g. "Home", "Office", "Main Warehouse"
+  street       String
+  city         String
+  state        String
+  postalCode   String?
+  country      String   @default("Nigeria")
+  latitude     Float
+  longitude    Float
+  contactName  String?
+  contactPhone String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  pickupOrders      Order[] @relation("PickupAddress")
+  destinationOrders Order[] @relation("DestinationAddress")
+
+  @@index([userId])
+}
+
+model Package {
+  id          String          @id @default(uuid())
+  creatorId   String
+  creator     User            @relation("CustomerPackages", fields: [creatorId], references: [id])
+  name        String
+  description String?
+  category    PackageCategory @default(PARCEL)
+  weightKg    Float           @default(1.0)
+  isFragile   Boolean         @default(false)
+  isSensitive Boolean         @default(false)
+  photoUrl    String?
+  valueAmount Decimal?        @db.Decimal(12, 2)
+  items       PackageItem[]
+  order       Order?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([creatorId])
+}
+
+model PackageItem {
+  id        String   @id @default(uuid())
+  packageId String
+  package   Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  name      String
+  quantity  Int      @default(1)
+  unitPrice Decimal? @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+
+  @@index([packageId])
+}
+
+model PackageDraft {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+// --------------------------------------------------------
+// ORDERS & LIFECYCLE
+// --------------------------------------------------------
+
+model Order {
+  id          String  @id @default(uuid())
+  orderNumber String  @unique // e.g. "DART-ORD-2026-9812"
+  trackingId  String  @unique // e.g. "TRK-A8F7D9"
+  customerId  String
+  customer    User    @relation("CustomerOrders", fields: [customerId], references: [id])
+  riderId     String?
+  rider       User?   @relation("RiderOrders", fields: [riderId], references: [id])
+  packageId   String  @unique
+  package     Package @relation(fields: [packageId], references: [id])
+
+  pickupAddressId      String
+  pickupAddress        Address @relation("PickupAddress", fields: [pickupAddressId], references: [id])
+  destinationAddressId String
+  destinationAddress   Address @relation("DestinationAddress", fields: [destinationAddressId], references: [id])
+
+  status        OrderStatus   @default(DRAFT)
+  paymentMethod PaymentMethod @default(WALLET)
+  isCodEligible Boolean       @default(false)
+  codCollected  Boolean       @default(false)
+
+  // Financial Breakdown (in NGN)
+  basePrice          Decimal @db.Decimal(12, 2)
+  distancePrice      Decimal @db.Decimal(12, 2)
+  weightPrice        Decimal @db.Decimal(12, 2)
+  surgePrice         Decimal @default(0) @db.Decimal(12, 2)
+  totalPrice         Decimal @db.Decimal(12, 2)
+  platformFee        Decimal @db.Decimal(12, 2)
+  riderSettlementFee Decimal @db.Decimal(12, 2)
+
+  // Distance & Metrics
+  distanceKm       Float
+  estimatedMinutes Int
+
+  // Handover confirmation code
+  handoverCode DeliveryConfirmationCode?
+
+  // Timeline events & assignments
+  deliveryEvents DeliveryEvent[]
+  assignments    RiderAssignment[]
+  arrivalNotifiedAt DateTime?
+  paymentIntents PaymentIntent[]
+  walletHold     WalletHold?
+  settlement     Settlement?
+  ratings        Rating[]
+  supportTickets SupportTicket[]
+  chatMessages   ChatMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([riderId])
+  @@index([status])
+  @@index([trackingId])
+  @@index([orderNumber])
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid())
+  chatId        String
+  senderId      String
+  sender        User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  clientMessageId String?
+  orderId       String?
+  order         Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  senderRole    String
+  type          String
+  text          String?
+  audioUrl      String?
+  audioDuration Float?
+  imageUrl      String?
+  fileName      String?
+  fileSize      Float?
+  fileUrl       String?
+  reactions     String[] @default([])
+  isPinned      Boolean  @default(false)
+  isEdited      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([chatId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([senderId, createdAt])
+  @@unique([chatId, senderId, clientMessageId])
+}
+
+model DeliveryConfirmationCode {
+  id          String   @id @default(uuid())
+  orderId     String   @unique
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  codeHash    String // Cryptographic hash of the 6-digit code
+  code        String? // Plaintext 6-digit code for authorized customer handover display
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5)
+  isUsed      Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+}
+
+model RiderAssignment {
+  id             String       @id @default(uuid())
+  orderId        String
+  order          Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  riderProfileId String
+  riderProfile   RiderProfile @relation(fields: [riderProfileId], references: [id], onDelete: Cascade)
+  isAccepted     Boolean      @default(false)
+  rejectedAt     DateTime?
+  acceptedAt     DateTime?
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([orderId])
+  @@index([riderProfileId])
+}
+
+model DeliveryEvent {
+  id          String      @id @default(uuid())
+  orderId     String
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status      OrderStatus
+  description String
+  actorId     String? // User ID who triggered transition
+  latitude    Float?
+  longitude   Float?
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// --------------------------------------------------------
+// PAYMENTS & WALLET (DOUBLE-ENTRY LEDGER)
+// --------------------------------------------------------
+
+model WalletAccount {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency     String   @default("NGN")
+  balance      Decimal  @default(0) @db.Decimal(14, 2) // Cache of ledger balance
+  holdsBalance Decimal  @default(0) @db.Decimal(14, 2)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+  holds         WalletHold[]
+  withdrawals   Withdrawal[]
+
+  @@index([userId])
+}
+
+model LedgerTransaction {
+  id             String                @id @default(uuid())
+  reference      String                @unique // e.g. "TX-A19F83D2"
+  idempotencyKey String?               @unique
+  type           LedgerTransactionType
+  description    String
+  amount         Decimal               @db.Decimal(14, 2)
+  currency       String                @default("NGN")
+  orderId        String?
+  metadata       Json?
+  entries        LedgerEntry[]
+  createdAt      DateTime              @default(now())
+
+  @@index([reference])
+  @@index([idempotencyKey])
+  @@index([orderId])
+}
+
+model LedgerEntry {
+  id            String            @id @default(uuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  walletId      String
+  wallet        WalletAccount     @relation(fields: [walletId], references: [id])
+  type          LedgerEntryType // DEBIT or CREDIT
+  amount        Decimal           @db.Decimal(14, 2)
+  balanceBefore Decimal           @db.Decimal(14, 2)
+  balanceAfter  Decimal           @db.Decimal(14, 2)
+  createdAt     DateTime          @default(now())
+
+  @@index([transactionId])
+  @@index([walletId])
+}
+
+model WalletHold {
+  id        String        @id @default(uuid())
+  walletId  String
+  wallet    WalletAccount @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  orderId   String        @unique
+  order     Order         @relation(fields: [orderId], references: [id])
+  amount    Decimal       @db.Decimal(14, 2)
+  status    HoldStatus    @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([walletId])
+  @@index([orderId])
+}
+
+model PaymentIntent {
+  id                String        @id @default(uuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reference         String        @unique // Merchant reference
+  provider          String        @default("mock") // "paystack", "flutterwave", "mock"
+  providerReference String?       @unique
+  amount            Decimal       @db.Decimal(14, 2)
+  currency          String        @default("NGN")
+  paymentMethod     PaymentMethod
+  status            PaymentStatus @default(PENDING)
+  rawWebhookPayload Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  refunds Refund[]
+
+  @@index([orderId])
+  @@index([reference])
+  @@index([providerReference])
+}
+
+model Settlement {
+  id          String    @id @default(uuid())
+  orderId     String    @unique
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  riderId     String
+  grossAmount Decimal   @db.Decimal(14, 2)
+  platformFee Decimal   @db.Decimal(14, 2)
+  netAmount   Decimal   @db.Decimal(14, 2) // Released to rider
+  isSettled   Boolean   @default(false)
+  settledAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([orderId])
+  @@index([riderId])
+}
+
+model Withdrawal {
+  id                String           @id @default(uuid())
+  walletId          String
+  wallet            WalletAccount    @relation(fields: [walletId], references: [id])
+  amount            Decimal          @db.Decimal(14, 2)
+  bankCode          String
+  bankName          String
+  accountNumber     String
+  accountName       String
+  status            WithdrawalStatus @default(PENDING)
+  providerReference String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([walletId])
+}
+
+model Refund {
+  id              String        @id @default(uuid())
+  paymentIntentId String
+  paymentIntent   PaymentIntent @relation(fields: [paymentIntentId], references: [id])
+  amount          Decimal       @db.Decimal(14, 2)
+  reason          String
+  status          PaymentStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+
+  @@index([paymentIntentId])
+}
+
+// --------------------------------------------------------
+// RATINGS, NOTIFICATIONS & AUDIT
+// --------------------------------------------------------
+
+model Rating {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  raterId   String
+  rater     User     @relation("RatingsGiven", fields: [raterId], references: [id])
+  targetId  String
+  target    User     @relation("RatingsReceived", fields: [targetId], references: [id])
+  score     Int // 1 to 5
+  review    String?
+  tags      String[] // e.g. ["On-Time", "Polite", "Careful"]
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([raterId])
+  @@index([targetId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String // "ORDER_UPDATE", "PAYMENT", "SYSTEM"
+  data      Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String // e.g. "AUTH_LOGIN", "STATE_TRANSITION", "REFUND_TRIGGERED"
+  entityType String // "Order", "User", "Wallet"
+  entityId   String
+  ipAddress  String?
+  userAgent  String?
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+}
+
+// --------------------------------------------------------
+// SUPPORT TICKETS & ISSUE REPORTING
+// --------------------------------------------------------
+
+model SupportTicket {
+  id           String   @id @default(uuid())
+  ticketNumber String   @unique // e.g. "TCK-849201"
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category     String // "Booking a delivery", "Payment Issues", "Rider behaviour", etc.
+  subject      String?
+  description  String
+  status       String   @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  priority     String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  orderId      String?
+  order        Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([category])
+  @@index([ticketNumber])
+}
+
+// --------------------------------------------------------
+// SAVED PAYMENT CARDS & TOKENIZATION
+// --------------------------------------------------------
+
+model SavedCard {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardType   String // "mastercard", "visa", "verve"
+  last4      String // e.g. "4587"
+  expMonth   String // e.g. "08"
+  expYear    String // e.g. "28"
+  cardHolder String?
+  token      String? // Authorization code or reference
+  provider   String   @default("paystack") // "paystack" | "flutterwave" | "mock"
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId, isDefault])
+}
+
+// --------------------------------------------------------
+// INBOUND PACKAGES
+// --------------------------------------------------------
+
+model InboundPackage {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackingId       String // e.g. "NG021358672334"
+  title            String // e.g. "SpeedAF Inbound Package"
+  store            String? // e.g. "AliExpress", "Amazon"
+  courier          String // e.g. "SpeedAF Express", "AliExpress"
+  category         String   @default("PARCEL")
+  status           String   @default("In-Transit") // In-Transit, Ready for pickup, Delivered, Cancelled
+  fromLocation     String
+  toLocation       String
+  shippedDate      String?
+  estimatedArrival String?
+  isArrived        Boolean  @default(false)
+  arrivedDate      String?
+  pickupTerminal   String?
+  fragileNote      String?
+  tracks           Json? // Array of scan milestones
+  payUrl           String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, trackingId])
+  @@index([userId])
+  @@index([trackingId])
+  @@index([status])
+}
